@@ -1,6 +1,10 @@
+import json
+
 import streamlit as st
 from google import genai
 from google.genai import types
+from twilio.base.exceptions import TwilioRestException
+from twilio.rest import Client as TwilioClient
 
 from prompts import SYSTEM_PROMPT, SUMMARY_REQUEST_PROMPT, WELCOME_MESSAGE_TEMPLATE
 
@@ -100,6 +104,7 @@ else:
 
         if (prompt or image_bytes) and (not image_file or image_mime_type):
             st.session_state.pop("conversation_summary", None)
+            st.session_state.pop("whatsapp_summary_sent_for", None)
             user_message = {
                 "role": "user",
                 "kind": "image" if image_bytes else "text",
@@ -159,6 +164,7 @@ else:
             key="generate_summary",
         ):
             st.session_state.pop("conversation_summary", None)
+            st.session_state.pop("whatsapp_summary_sent_for", None)
             try:
                 summary_chat = client.chats.create(
                     model=GEMINI_MODEL,
@@ -180,5 +186,77 @@ else:
                     st.error("Gemini returned an empty summary. Please try again.")
 
         if st.session_state.get("conversation_summary"):
+            summary = st.session_state["conversation_summary"]
             st.subheader("WhatsApp-ready summary")
-            st.text(st.session_state["conversation_summary"])
+            st.text(summary)
+
+            if st.session_state.get("whatsapp_summary_sent_for") == summary:
+                st.success("Conversation summary sent to WhatsApp.")
+            elif st.button("Send summary to WhatsApp", key="send_whatsapp_summary"):
+                required_secrets = (
+                    "TWILIO_ACCOUNT_SID",
+                    "TWILIO_AUTH_TOKEN",
+                    "TWILIO_WHATSAPP_FROM",
+                    "TWILIO_CONTENT_SID",
+                )
+                missing_secrets = [
+                    secret_name
+                    for secret_name in required_secrets
+                    if not st.secrets.get(secret_name)
+                ]
+
+                if missing_secrets:
+                    st.error(
+                        "Add these Twilio settings to .streamlit/secrets.toml: "
+                        + ", ".join(missing_secrets)
+                    )
+                else:
+                    recipient_number = st.session_state["whatsapp_number"].strip()
+                    if recipient_number.startswith("whatsapp:"):
+                        recipient_number = recipient_number.removeprefix("whatsapp:")
+                    recipient_number = "".join(
+                        character
+                        for character in recipient_number
+                        if character.isdigit() or character == "+"
+                    )
+
+                    if not recipient_number.startswith("+"):
+                        st.error(
+                            "Enter your WhatsApp number in international format, "
+                            "including the leading +."
+                        )
+                    else:
+                        sender = st.secrets["TWILIO_WHATSAPP_FROM"].strip()
+                        if not sender.startswith("whatsapp:"):
+                            sender = f"whatsapp:{sender}"
+
+                        try:
+                            twilio_client = TwilioClient(
+                                st.secrets["TWILIO_ACCOUNT_SID"],
+                                st.secrets["TWILIO_AUTH_TOKEN"],
+                            )
+                            twilio_client.messages.create(
+                                from_=sender,
+                                to=f"whatsapp:{recipient_number}",
+                                content_sid=st.secrets["TWILIO_CONTENT_SID"],
+                                content_variables=json.dumps(
+                                    {
+                                        "1": st.session_state["user_name"],
+                                        "2": summary,
+                                    }
+                                ),
+                            )
+                        except TwilioRestException as error:
+                            st.error(
+                                "Twilio could not send the summary "
+                                f"(error {error.code}). Check the approved template "
+                                "and that the recipient has joined your WhatsApp Sandbox."
+                            )
+                        except Exception as error:
+                            st.error(
+                                "Could not send the summary. Check the Twilio "
+                                f"settings and try again ({type(error).__name__})."
+                            )
+                        else:
+                            st.session_state["whatsapp_summary_sent_for"] = summary
+                            st.success("Conversation summary sent to WhatsApp.")
