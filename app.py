@@ -2,7 +2,7 @@ import streamlit as st
 from google import genai
 from google.genai import types
 
-from prompts import SYSTEM_PROMPT, WELCOME_MESSAGE_TEMPLATE
+from prompts import SYSTEM_PROMPT, SUMMARY_REQUEST_PROMPT, WELCOME_MESSAGE_TEMPLATE
 
 GEMINI_MODEL = "gemini-3.8-flash"
 
@@ -67,6 +67,7 @@ else:
             if message["content"]:
                 st.markdown(message["content"])
 
+    summary_container = st.container()
     chat_submission = st.chat_input(
         "Tell me what you ate or attach a meal photo...",
         accept_file=True,
@@ -98,6 +99,7 @@ else:
                 image_bytes = image_file.getvalue()
 
         if (prompt or image_bytes) and (not image_file or image_mime_type):
+            st.session_state.pop("conversation_summary", None)
             user_message = {
                 "role": "user",
                 "kind": "image" if image_bytes else "text",
@@ -150,3 +152,33 @@ else:
                         st.markdown(assistant_message["content"])
                 else:
                     st.error("Gemini returned an empty response. Please try again.")
+
+    with summary_container:
+        if st.session_state["messages"] and st.button(
+            "Generate WhatsApp summary",
+            key="generate_summary",
+        ):
+            st.session_state.pop("conversation_summary", None)
+            try:
+                summary_chat = client.chats.create(
+                    model=GEMINI_MODEL,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                    ),
+                    history=st.session_state["gemini_chat"].get_history(),
+                )
+                summary_response = summary_chat.send_message(
+                    SUMMARY_REQUEST_PROMPT,
+                )
+                summary_text = summary_response.text
+            except Exception as error:
+                st.error(f"Summary request failed: {error}")
+            else:
+                if summary_text:
+                    st.session_state["conversation_summary"] = summary_text
+                else:
+                    st.error("Gemini returned an empty summary. Please try again.")
+
+        if st.session_state.get("conversation_summary"):
+            st.subheader("WhatsApp-ready summary")
+            st.text(st.session_state["conversation_summary"])
