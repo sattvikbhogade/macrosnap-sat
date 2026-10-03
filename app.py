@@ -16,6 +16,9 @@ def get_gemini_client() -> genai.Client:
 
 client = get_gemini_client()
 
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+
 st.title("MacroSnap")
 st.caption(f"Gemini model configured: {GEMINI_MODEL}")
 
@@ -56,3 +59,37 @@ else:
             name=st.session_state["user_name"],
         )
     )
+
+    for message in st.session_state["messages"]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if prompt := st.chat_input("Tell me what you ate..."):
+        user_message = {
+            "role": "user",
+            "kind": "text",
+            "content": prompt,
+        }
+        st.session_state["messages"].append(user_message)
+
+        with st.chat_message(user_message["role"]):
+            st.markdown(user_message["content"])
+
+        try:
+            response = st.session_state["gemini_chat"].send_message(prompt)
+            response_text = response.text
+        except Exception as error:
+            st.error(f"Gemini request failed: {error}")
+        else:
+            if response_text:
+                assistant_message = {
+                    "role": "assistant",
+                    "kind": "text",
+                    "content": response_text,
+                }
+                st.session_state["messages"].append(assistant_message)
+
+                with st.chat_message(assistant_message["role"]):
+                    st.markdown(assistant_message["content"])
+            else:
+                st.error("Gemini returned an empty response. Please try again.")
