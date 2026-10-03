@@ -14,4 +14,4 @@ def get_gemini_client() -> genai.Client:
 client = get_gemini_client()
 
 st.title("MacroSnap")
-st.write("Your food insights start here.")
+st.caption(f"Gemini model configured: {GEMINI_MODEL}")
