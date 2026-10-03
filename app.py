@@ -62,34 +62,91 @@ else:
 
     for message in st.session_state["messages"]:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+            if message["kind"] == "image":
+                st.image(message["image"], caption=message["file_name"])
+            if message["content"]:
+                st.markdown(message["content"])
 
-    if prompt := st.chat_input("Tell me what you ate..."):
-        user_message = {
-            "role": "user",
-            "kind": "text",
-            "content": prompt,
-        }
-        st.session_state["messages"].append(user_message)
-
-        with st.chat_message(user_message["role"]):
-            st.markdown(user_message["content"])
-
-        try:
-            response = st.session_state["gemini_chat"].send_message(prompt)
-            response_text = response.text
-        except Exception as error:
-            st.error(f"Gemini request failed: {error}")
+    chat_submission = st.chat_input(
+        "Tell me what you ate or attach a meal photo...",
+        accept_file=True,
+        file_type=["jpg", "jpeg", "png"],
+    )
+    if chat_submission:
+        if isinstance(chat_submission, str):
+            prompt = chat_submission.strip()
+            uploaded_files = []
         else:
-            if response_text:
-                assistant_message = {
-                    "role": "assistant",
-                    "kind": "text",
-                    "content": response_text,
-                }
-                st.session_state["messages"].append(assistant_message)
+            prompt = chat_submission.text.strip()
+            uploaded_files = chat_submission.files
 
-                with st.chat_message(assistant_message["role"]):
-                    st.markdown(assistant_message["content"])
+        image_file = uploaded_files[0] if uploaded_files else None
+        image_mime_type = None
+        image_bytes = None
+
+        if image_file:
+            extension = image_file.name.rsplit(".", 1)[-1].lower()
+            image_mime_type = {
+                "jpg": "image/jpeg",
+                "jpeg": "image/jpeg",
+                "png": "image/png",
+            }.get(extension)
+
+            if not image_mime_type:
+                st.error("Please upload a JPG, JPEG, or PNG image.")
             else:
-                st.error("Gemini returned an empty response. Please try again.")
+                image_bytes = image_file.getvalue()
+
+        if (prompt or image_bytes) and (not image_file or image_mime_type):
+            user_message = {
+                "role": "user",
+                "kind": "image" if image_bytes else "text",
+                "content": prompt,
+            }
+            if image_bytes:
+                user_message["image"] = image_bytes
+                user_message["mime_type"] = image_mime_type
+                user_message["file_name"] = image_file.name
+
+            st.session_state["messages"].append(user_message)
+
+            with st.chat_message(user_message["role"]):
+                if image_bytes:
+                    st.image(image_bytes, caption=image_file.name)
+                if prompt:
+                    st.markdown(prompt)
+
+            try:
+                if image_bytes:
+                    message_parts = []
+                    if prompt:
+                        message_parts.append(prompt)
+                    message_parts.append(
+                        types.Part.from_bytes(
+                            data=image_bytes,
+                            mime_type=image_mime_type,
+                        )
+                    )
+                    response = st.session_state["gemini_chat"].send_message(
+                        message_parts,
+                    )
+                else:
+                    response = st.session_state["gemini_chat"].send_message(
+                        prompt,
+                    )
+                response_text = response.text
+            except Exception as error:
+                st.error(f"Gemini request failed: {error}")
+            else:
+                if response_text:
+                    assistant_message = {
+                        "role": "assistant",
+                        "kind": "text",
+                        "content": response_text,
+                    }
+                    st.session_state["messages"].append(assistant_message)
+
+                    with st.chat_message(assistant_message["role"]):
+                        st.markdown(assistant_message["content"])
+                else:
+                    st.error("Gemini returned an empty response. Please try again.")
